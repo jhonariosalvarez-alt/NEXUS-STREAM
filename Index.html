@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nexus Stream - Live Sync</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        :root {
+            --bg-body: #05070a;
+            --bg-card: #12151c;
+            --accent: #007AFF;
+            --text-primary: #ffffff;
+        }
+
+        body, html {
+            margin: 0; padding: 0;
+            background-color: var(--bg-body);
+            color: var(--text-primary);
+            font-family: 'Segoe UI', sans-serif;
+            height: 100vh; overflow: hidden;
+        }
+
+        /* --- REPRODUCTOR --- */
+        #videoContainer {
+            width: 100%; aspect-ratio: 16 / 9;
+            background: #000; position: relative;
+        }
+        video { width: 100%; height: 100%; background: #000; }
+
+        .live-badge {
+            position: absolute; top: 10px; left: 10px;
+            background: #ff0000; color: white; padding: 4px 8px;
+            font-size: 11px; font-weight: bold; border-radius: 4px;
+            z-index: 10; text-transform: uppercase;
+        }
+
+        .fullscreen-btn {
+            position: absolute; bottom: 10px; right: 10px;
+            background: var(--accent); border: none; color: white;
+            padding: 8px 12px; border-radius: 8px; font-weight: bold;
+            cursor: pointer; z-index: 20;
+        }
+
+        /* --- BUSCADOR --- */
+        .search-container { padding: 15px; }
+        .search-box {
+            background: var(--bg-card); border: 1px solid #333;
+            border-radius: 12px; padding: 12px; display: flex; align-items: center;
+        }
+        .search-box input {
+            background: transparent; border: none; color: white;
+            width: 100%; outline: none; padding-left: 10px; font-size: 16px;
+        }
+
+        /* --- LISTA --- */
+        .channel-list {
+            height: calc(100vh - 350px);
+            overflow-y: auto; padding: 0 15px;
+        }
+
+        .channel-item {
+            display: flex; align-items: center; padding: 14px;
+            margin-bottom: 8px; background: var(--bg-card);
+            border-radius: 12px; cursor: pointer;
+            border-left: 4px solid transparent; transition: 0.2s;
+        }
+        .channel-item:active { transform: scale(0.98); background: #1c212b; }
+        .channel-item.playing { border-left-color: var(--accent); background: #1c212b; }
+
+        .channel-logo {
+            width: 44px; height: 44px; background: #1a1e26;
+            border-radius: 50%; margin-right: 15px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold; color: var(--accent); overflow: hidden;
+        }
+        .channel-logo img { width: 100%; height: 100%; object-fit: cover; }
+
+        .channel-info b { display: block; font-size: 0.95rem; margin-bottom: 2px; }
+        .channel-info span { font-size: 0.75rem; color: var(--accent); }
+    </style>
+</head>
+<body>
+
+    <div id="videoContainer">
+        <div class="live-badge">En Vivo</div>
+        <video id="video" playsinline controls></video>
+        <button class="fullscreen-btn" onclick="goFullScreen()">⛶ Pantalla Completa</button>
+    </div>
+
+    <div class="search-container">
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Buscar canal (ej: Caracol)..." oninput="filterChannels()">
+        </div>
+    </div>
+
+    <div class="channel-list" id="channelList">
+        <div style="text-align:center; padding:20px; color:#666;">Cargando señales...</div>
+    </div>
+
+<script>
+    // Usamos la lista de Colombia
+    const m3uUrl = 'https://iptv-org.github.io/iptv/countries/co.m3u';
+    let allChannels = [];
+    const video = document.getElementById('video');
+    const container = document.getElementById('videoContainer');
+    let hls = new Hls();
+
+    // Sincronización al aire al dar play
+    video.addEventListener('play', () => {
+        if (hls && hls.liveSyncPosition) {
+            video.currentTime = hls.liveSyncPosition;
+        }
+    });
+
+    async function initApp() {
+        try {
+            const res = await fetch(m3uUrl);
+            const data = await res.text();
+            parseM3U(data);
+        } catch (e) {
+            document.getElementById('channelList').innerHTML = "<div style='text-align:center;'>Error de conexión. Verifica tu internet.</div>";
+        }
+    }
+
+    function parseM3U(text) {
+        const lines = text.split('\n');
+        allChannels = []; // Limpiar lista
+        
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].startsWith('#EXTINF:')) {
+                // Extraer nombre
+                const parts = lines[i].split(',');
+                const name = parts[parts.length - 1].trim();
+                
+                // Extraer logo si existe
+                const logoMatch = lines[i].match(/tvg-logo="([^"]+)"/);
+                const logo = logoMatch ? logoMatch[1] : null;
+                
+                const url = lines[i+1] ? lines[i+1].trim() : null;
+                
+                if (url && url.startsWith('http')) {
+                    allChannels.push({ name, url, logo });
+                }
+            }
+        }
+        render(allChannels);
+    }
+
+    function render(list) {
+        const container = document.getElementById('channelList');
+        if (list.length === 0) {
+            container.innerHTML = "<div style='text-align:center; padding:20px;'>No se encontraron canales.</div>";
+            return;
+        }
+
+        container.innerHTML = list.map((ch, index) => `
+            <div class="channel-item" onclick="play('${ch.url}', this)">
+                <div class="channel-logo">
+                    ${ch.logo ? `<img src="${ch.logo}" onerror="this.parentElement.innerHTML='TV'">` : 'TV'}
+                </div>
+                <div class="channel-info">
+                    <b>${ch.name}</b>
+                    <span>Transmisión en directo</span>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function filterChannels() {
+        const q = document.getElementById('searchInput').value.toLowerCase();
+        const filtered = allChannels.filter(c => c.name.toLowerCase().includes(q));
+        render(filtered);
+    }
+
+    function play(url, element) {
+        // Estética: marcar canal activo
+        document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('playing'));
+        element.classList.add('playing');
+
+        if (Hls.isSupported()) {
+            hls.destroy();
+            hls = new Hls({ liveSyncDurationCount: 3 });
+            hls.loadSource(url);
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+        } else {
+            video.src = url;
+            video.play();
+        }
+    }
+
+    function goFullScreen() {
+        if (container.requestFullscreen) container.requestFullscreen();
+        else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+    }
+
+    window.onload = initApp;
+</script>
+</body>
+</html>
